@@ -29,6 +29,18 @@ from pioreactor.whoami import get_testing_experiment_name
 from pioreactor.whoami import get_unit_name
 from pioreactor.whoami import is_testing_env
 
+def green(string: str) -> str:
+    return style(string, fg="green")
+
+
+def red(string: str) -> str:
+    return style(string, fg="red")
+
+
+def bold(string: str) -> str:
+    return style(string, bold=True)
+
+
 
 def introduction() -> None:
     import logging
