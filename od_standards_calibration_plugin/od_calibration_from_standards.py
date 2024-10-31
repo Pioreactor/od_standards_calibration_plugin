@@ -119,7 +119,6 @@ def start_stirring(target_rpm: int) -> Stirrer:
     st.block_until_rpm_is_close_to_target(abs_tolerance=120)
     return st
 
-
 def plot_data(
     x,
     y,
@@ -140,13 +139,19 @@ def plot_data(
 
     plt.theme("pro")
     plt.title(title)
+    plt.xlabel("OD600")
+    plt.ylabel("OD Reading (Raw)")
+
     plt.plot_size(105, 22)
 
     if interpolation_curve:
-        plt.plot(x, [interpolation_curve(x_) for x_ in x], color=204)
-        plt.plot_size(145, 42)
+        plt.plot(sorted(x), [interpolation_curve(x_) for x_ in sorted(x)], color=204)
+        plt.plot_size(145, 26)
 
     plt.xlim(x_min, x_max)
+    plt.yfrequency(6)
+    plt.xfrequency(6)
+
     plt.show()
 
 
@@ -335,7 +340,7 @@ def save_results(
         curve_type=curve_type,
         voltages=voltages,
         od600s=od600_values,
-        ir_led_intensity=float(config["od_config"]["ir_led_intensity"]),
+        ir_led_intensity=float(config["od_reading.config"]["ir_led_intensity"]),
         pd_channel=signal_channel,
     )
 
@@ -410,11 +415,11 @@ def od_calibration_from_standards() -> None:
         click.echo()
         click.echo(f"Finished calibration of {name} ✅")
 
-        if not config.getboolean("od_config", "use_calibration", fallback=False):
+        if not config.getboolean("od_reading.config", "use_calibration", fallback=False):
             click.echo()
             click.echo(
                 click.style(
-                    "Currently [od_config][use_calibration] is set to 0 in your config.ini. This should be set to 1 to use calibrations.",
+                    "Currently [od_reading.config][use_calibration] is set to 0 in your config.ini. This should be set to 1 to use calibrations.",
                     bold=True,
                 )
             )
@@ -497,20 +502,14 @@ def publish_to_leader(name: str) -> bool:
         )
 
     try:
-        res = put(
-            f"http://{leader_address}/api/calibrations",
-            encode(calibration_result),
-            headers={"Content-Type": "application/json"},
-        )
-        if not res.ok:
-            success = False
+        res = put_into_leader("/api/calibrations", json=calibration_result)
+        res.raise_for_status()
+        echo("✅ Published to leader.")
     except Exception as e:
-        print(e)
         success = False
-    if not success:
-        click.echo(
-            f"Could not update in database on leader at http://{leader_address}/api/calibrations ❌"
-        )
+        print(e)
+        echo(f"Could not update in database on leader at http://{leader_address}/api/calibrations ❌")
+
     return success
 
 
@@ -534,22 +533,27 @@ def change_current(name: str) -> None:
 
             current_calibrations[angle] = encode(new_calibration)
 
-        res = patch(
-            f"http://{leader_address}/api/calibrations/{get_unit_name()}/{new_calibration.type}/{new_calibration.name}",
-            json={"current": 1},
-        )
-        if not res.ok:
-            click.echo("Could not update in database on leader ❌")
-
-        if old_calibration:
-            click.echo(
-                f"Replaced {old_calibration.name} with {new_calibration.name}   ✅"
+        try:
+            res = patch_into_leader(
+                f"/api/calibrations/{get_unit_name()}/{new_calibration.type}/{new_calibration.name}",
+                json={"current": 1},
             )
+            res.raise_for_status()
+        except HTTPErrorStatus as e:
+            if e.status_code == 404:
+                # it doesn't exist in leader, so lets put it there.
+                publish_to_leader(name)
+                change_current(name)
+            else:
+                echo("Could not update in database on leader ❌")
         else:
-            click.echo(f"Set {new_calibration.name} to current calibration  ✅")
+            if old_calibration:
+                echo(f"Replaced `{old_calibration.name}` with `{new_calibration.name}`   ✅")
+            else:
+                echo(f"Set `{new_calibration.name}` to current calibration  ✅")
 
-    except Exception:
-        click.echo("Failed to swap.")
+    except Exception as e:
+        echo(red(f"Failed to swap. {e}"))
         raise click.Abort()
 
 
